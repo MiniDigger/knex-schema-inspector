@@ -29,10 +29,12 @@ type RawColumn = {
 export default class Postgres implements SchemaInspector {
   knex: Knex;
   schema: string;
+  explodedSchema: Array<string>;
 
   constructor(knex: Knex) {
     this.knex = knex;
-    this.schema = 'public';
+    this.schema = knex.client.searchPath || 'public';
+    this.explodedSchema = this.schema.split(',');
   }
 
   // Postgres specific
@@ -43,6 +45,7 @@ export default class Postgres implements SchemaInspector {
    */
   withSchema(schema: string) {
     this.schema = schema;
+    this.explodedSchema = this.schema.split(',');
     return this;
   }
 
@@ -80,7 +83,7 @@ export default class Postgres implements SchemaInspector {
     const records = await this.knex
       .select<{ tablename: string }[]>('tablename')
       .from('pg_catalog.pg_tables')
-      .where({ schemaname: this.schema });
+      .whereIn('schemaname', this.explodedSchema);
     return records.map(({ tablename }) => tablename);
   }
 
@@ -103,7 +106,7 @@ export default class Postgres implements SchemaInspector {
           .as('table_comment')
       )
       .from('information_schema.tables')
-      .where({ table_schema: this.schema })
+      .whereIn('table_schema' this.explodedSchema)
       .andWhere({ table_catalog: this.knex.client.database() })
       .andWhere({ table_type: 'BASE TABLE' })
       .orderBy('table_name', 'asc');
@@ -141,7 +144,8 @@ export default class Postgres implements SchemaInspector {
     const subquery = this.knex
       .select()
       .from('information_schema.tables')
-      .where({ table_name: table, table_schema: this.schema });
+      .whereIn('table_schema', this.explodedSchema)
+      .andWhere({ table_name: table });
     const record = await this.knex
       .select<{ exists: boolean }>(this.knex.raw('exists (?)', [subquery]))
       .first();
@@ -161,7 +165,7 @@ export default class Postgres implements SchemaInspector {
         'column_name'
       )
       .from('information_schema.columns')
-      .where({ table_schema: this.schema });
+      .whereIn('table_schema', this.explodedSchema);
 
     if (table) {
       query.andWhere({ table_name: table });
@@ -252,7 +256,7 @@ export default class Postgres implements SchemaInspector {
         AND ffk.column_name = c.column_name
       `
       )
-      .where({ 'c.table_schema': this.schema });
+      .whereIn('c.table_schema', this.explodedSchema);
 
     if (table) {
       query.andWhere({ 'c.table_name': table });
@@ -319,8 +323,8 @@ export default class Postgres implements SchemaInspector {
     const subquery = this.knex
       .select()
       .from('information_schema.columns')
-      .where({
-        table_schema: this.schema,
+      .whereIn('table_schema', this.explodedSchema)
+      .andWhere({
         table_name: table,
         column_name: column,
       });
@@ -342,10 +346,10 @@ export default class Postgres implements SchemaInspector {
         'information_schema.table_constraints.constraint_name',
         'information_schema.key_column_usage.constraint_name'
       )
-      .where({
+      .whereIn("information_schema.table_constraints.table_schema", this.explodedSchema)
+      .andWhere({
         'information_schema.table_constraints.constraint_type': 'PRIMARY KEY',
         'information_schema.table_constraints.table_name': table,
-        'information_schema.table_constraints.table_schema': this.schema,
       })
       .first();
 
